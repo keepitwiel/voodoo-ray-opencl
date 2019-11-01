@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.misc import imread, imsave
+from imageio import imread, imsave
 from time import time
 import pygame
 from pygame import Surface
@@ -56,9 +56,9 @@ def main():
             'opencl/origins.cl',
             'opencl/surfaceid.cl',
             'opencl/trace.cl',
-            'opencl/render_surface.cl'
+            'opencl/render_surface.cl',
         ],
-        2
+        device=1,
     )
     camera = Camera(position, view_direction, walk_direction, width, height, opencl, environment)
     camera.calculate_ray_origins(opencl)

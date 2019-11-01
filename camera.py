@@ -1,7 +1,7 @@
 import pyopencl as cl
 import pyopencl.array as cl_array
 import numpy as np
-from scipy.misc import imsave
+from imageio import imsave
 import pyopencl.array as cl_array
 from pygame import surfarray
 import hashlib

@@ -87,6 +87,7 @@ float3 diffuse(float3 p, float3 q, float r1, float r2) {
     return d;
 }
 
+
 float3 diffuse_angular(float3 p, float3 q, float r1, float r2) {
     int3 n = convert_int3(p) - convert_int3(q);
 
@@ -106,7 +107,7 @@ float3 diffuse_angular(float3 p, float3 q, float r1, float r2) {
     return d;
 }
 
-float3 diffuse_angular(int3 n, float r1, float r2) {
+float3 diffuse_angular2(int3 n, float r1, float r2) {
     float phi = r1 * PI;
     float theta = 0.5f * r2 * PI;
 
