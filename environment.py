@@ -76,20 +76,15 @@ class Environment(object):
         pass
 
 def prison(d):
-    array = np.zeros((d[0], d[1], d[2]), dtype=np.uint64) + (WALL | GREY)
+    array = np.zeros((d[0], d[1], d[2]), dtype=np.uint64) + (WALL | DARK_BLUE | RED)
     array[1:d[0] - 1, 1:d[1] - 1, 1:d[2]] = OPEN_SPACE
     array[1:d[0] - 1, 1:d[1] - 1, 0] = (WALL | GREY )#| MIRROR_0X3F)
-    #array[1:d[0] - 1, 1:d[1] - 1, d[2] - 1] = (LOCAL_LIGHT | WHITE )#| MIRROR_0X3F)
-    array[1:d[0] - 1, 1:d[1]//4, d[2]//3] = (WALL | GREY)
-    #array[0, 1:d[1] - 1, 1:d[2]] = (WALL | RED )#| MIRROR_0X3F)
-    #array[d[0] - 1, 1:d[1] - 1, 1:d[2]] = (WALL | RED )#| MIRROR_0X3F)
-    #array[d[0] - 2, d[1] - 2, 1:d[2]] = (LOCAL_LIGHT | WHITE)
-    # array[1, d[1] - 2, 1:d[2]] = (LOCAL_LIGHT | WHITE)
-    # array[d[0] - 2, 1, 1:d[2]] = (LOCAL_LIGHT | WHITE)
-    # array[1, 1, 1:d[2]] = (LOCAL_LIGHT | WHITE)
+    array[1:d[0] - 1, 1:10, d[2]//3] = (WALL | GREY)
+    array[0, 1:d[1] - 1, 1:d[2]] = (WALL | RED )#| MIRROR_0X3F)
+    array[d[0] - 1, 1:d[1] - 1, 1:d[2]] = (WALL | RED )#| MIRROR_0X3F)
+    array[d[0] - 2, d[1] - 2, 1:d[2]] = (LOCAL_LIGHT | WHITE)
 
-    #array[3:d[0] - 3:4, 3:d[1] - 3:4, 3:d[2] - 3:4] = (WALL | YELLOW)
-    #array[3:d[0] - 3:4, 3:d[1] - 3:4, 3:d[2] - 3:4] = (LOCAL_LIGHT | WHITE)
+    array[3:d[0] - 3:4, 3:d[1] - 3:4, 3:d[2] - 3:4] = (WALL | YELLOW)
 
     return array
 

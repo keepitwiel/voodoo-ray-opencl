@@ -12,6 +12,7 @@
 #define WALL 1
 #define LOCAL_LIGHT 2
 #define GLOBAL_LIGHT 3
+#define MIRROR 4
 
 uint l1(int3 a) {
     return (uint)(abs(a.x) + abs(a.y) + abs(a.z));
@@ -52,6 +53,35 @@ float3 diffuse(float3 p, float3 q, float r1, float r2) {
     return d;
 }
 
+float3 diffuse_angular(float3 p, float3 q, float r1, float r2) {
+    int3 n = convert_int3(p) - convert_int3(q);
+
+    float phi = r1 * PI;
+    float theta = 0.5f * r2 * PI;
+
+    float x = cos(theta) * cos(phi);
+    float y = cos(theta) * sin(phi);
+    float z = sin(theta);
+
+    float3 d = {
+        (n.x != 0) ? n.x * fabs(x) : x,
+        (n.y != 0) ? n.y * fabs(y) : y,
+        (n.z != 0) ? n.z * fabs(z) : z
+    };
+
+    return d;
+}
+
+float3 mirror(float3 p, float3 q, float3 d) {
+    int3 n = convert_int3(p) - convert_int3(q);
+
+    d.x = (n.x != 0) ? -d.x : d.x;
+    d.y = (n.y != 0) ? -d.y : d.y;
+    d.z = (n.z != 0) ? -d.z : d.z;
+
+    return d;
+}
+
 float3 diffuse_smoke(float r1, float r2) {
     float phi = r1*2.0*PI;
     float theta = (r2-0.5)*PI;
@@ -75,43 +105,44 @@ uint blocks_ahead(float3 p, float3 q) {
     return abs(pi.x - qi.x) + abs(pi.y - qi.y) + abs(pi.z - qi.z);
 }
 
+void next_block(float3 *p, float3 *q, float3 *d, float propagation_length) {
+    /*
+     * given position p and direction d, propagate ray until it
+     * hits the surface of the next block
+     */
+    uint delta = 0;
+    for (;;) {
+        //printf("prop length: %2.3f\n", propagation_length);
+        *q = *p + *d * propagation_length;
+        delta = blocks_ahead(*p, *q);
+        if (delta == 0) *p = *q;
+        else if (delta == 1) break;
+        else propagation_length *= PROPAGATION_REDUCTION_FACTOR;
+        if (propagation_length <= MIN_PROPAGATION_LENGTH) break;
+    }
+}
+
 int propagate(float3 *p, float3 *q, float3 *d,
-              float3 *color,
+              float3 *color, uint3 *env_prop,
               float initial_propagation_length,
-              uint3 dims, __global uint *environment,
+              uint3 dims, __global ulong *environment,
               long s, float r1, float r2) {
     /*
     Propagates a ray until it hits something that's not empty space,
     and returns a flag along with updated variables
+
+    p: start position of ray
+    q:
     */
     int flag = PROPAGATE;
     uint env_type = 0;
     uint env_idx = 0;
     int3 qi = {0, 0, 0};
     float3 col = {0.0f, 0.0f, 0.0f};
-    uint env = 0;
-    uint delta = 0;
-    float speed = initial_propagation_length;
-    float smoke_threshold;
+    ulong env = 0;
 
     while (flag == PROPAGATE) {
-        qi = convert_int3(*p);
-        env_idx = qi.x * dims.y * dims.z + qi.y * dims.z + qi.z;
-        env = environment[env_idx];
-        env_type = (env & 0x000000FF);
-
-        speed = initial_propagation_length;
-        // first, get the next block
-        for (;;) {
-            *q = *p + *d * speed;
-            delta = blocks_ahead(*p, *q);
-            if (delta == 0) *p = *q;
-            else if (delta == 1) break;
-            else speed *= PROPAGATION_REDUCTION_FACTOR;
-            if (speed <= MIN_PROPAGATION_LENGTH) break;
-        }
-
-        // we found the next block
+        next_block(p, q, d, initial_propagation_length);
         qi = convert_int3(*q);
 
         if (qi.x >= 0 && qi.y >= 0 && qi.z >= 0 &&
@@ -120,17 +151,24 @@ int propagate(float3 *p, float3 *q, float3 *d,
             env_idx = qi.x * dims.y * dims.z + qi.y * dims.z + qi.z;
             env = environment[env_idx];
 
-            // maybe color assignment not needed yet?
-            col.x = ((env & 0xFF000000) >> 24) / 255.0f;
-            col.y = ((env & 0x00FF0000) >> 16) / 255.0f;
-            col.z = ((env & 0x0000FF00) >> 8) / 255.0f;
-            *color = col;
+            env_type = (env & 0xFF00000000000000) >> 56;
+            *env_prop = (uint3){
+                (env & 0x00FF000000000000) >> 48, // 0 = pure diffusion, 0xFF = pure reflection
+                (env & 0x0000FF0000000000) >> 40, // not implemented yet
+                (env & 0x000000FF00000000) >> 32 // not implemented yet
+            };
 
-            env_type = (env & 0x000000FF);
+            *color = (float3){
+                ((env & 0x00000000FF000000) >> 24) / 255.0f,
+                ((env & 0x0000000000FF0000) >> 16) / 255.0f,
+                ((env & 0x000000000000FF00) >> 8) / 255.0f
+            };
 
+            //printf("%lu\n", env);
             if (env_type == OPEN_SPACE) *p = *q; // flag stays on PROPAGATE
             else if (env_type == WALL) flag = WALL;
             else if (env_type == LOCAL_LIGHT) flag = LOCAL_LIGHT;
+            else if (env_type == MIRROR) flag = MIRROR;
             else flag = TERMINATE;
         } else {
             flag = GLOBAL_LIGHT;
@@ -139,7 +177,8 @@ int propagate(float3 *p, float3 *q, float3 *d,
     return flag;
 }
 
-__kernel void trace
+
+__kernel void trace_old
 (
     __global float *initial_propagation_length,
     __global int *width,
@@ -192,13 +231,14 @@ __kernel void trace
     //printf("%u... GO %2.3f ", i, intensity_tmp.x/MAX_INT_AS_FLOAT);
 
     float3 color = {0.0f, 0.0f, 0.0f};
+    uint3 env_prop = {0, 0, 0};
 
     int flag = PROPAGATE;
 
     while (flag != TERMINATE) {
         if (flag == PROPAGATE) {
             flag = propagate(
-                &p, &q, &d, &color,
+                &p, &q, &d, &color, &env_prop,
                 *initial_propagation_length,
                 dims, environment, s, r1, r2);
         } else if (flag == WALL) {
@@ -211,7 +251,7 @@ __kernel void trace
                 s = rnd_long(s);
                 r1 = long2float(s);
                 seed[i] = s;
-                d = diffuse(p, q, r1, r2);
+                d = diffuse_angular(p, q, r1, r2);
                 flag = PROPAGATE;
             }
         } else if (flag == LOCAL_LIGHT) {
@@ -223,47 +263,136 @@ __kernel void trace
         } else flag = TERMINATE;
     }
 
-    //printf("T @ %2.3f.\n", intensity_tmp.x/MAX_INT_AS_FLOAT);
-//    intensity[i] =
-//        ((uint)(intensity_tmp.x) & 0xFF000000) +
-//        (((uint)(intensity_tmp.y) & 0xFF000000) >> 8) +
-//        (((uint)(intensity_tmp.z) & 0xFF000000) >> 16);
     char3 v = {(char)(intensity_tmp.x / 21677216), (char)(intensity_tmp.y / 21677216), (char)(intensity_tmp.z / 21677216)};
-//    char3 v = {255, 127, 0};
-    //printf("%u %u %u\n", v.x, v.y, v.z);
     vstore3(v, i, intensity);
 }
 
-float3 project
+__kernel void trace
 (
-    float3 p,
-    float3 d,
-    float initial_propagation_length,
-    uint env_dim,
-    __global uint *environment,
-    float *distance
+    __global float *initial_propagation_length,
+    __global int *width,
+    __global int *height,
+    __global float *position,
+    __global float *direction,
+    __global char *intensity,
+    __global uint *env_dim,
+    __global ulong *environment,
+    __global int *seed
 )
 {
-    float3 p_candidate;
-    float length = initial_propagation_length;
-    *distance = length;
+    uint x = get_global_id(0);
+    uint y = get_global_id(1);
+    uint i = *height * x + y;
 
-    for (int i = 0; i < 100; i++) {
-        p_candidate = p + d * length;
+    // random variables
+    long s = seed[i];
+    float r1 = long2float(s), r2;
+    // crappy way to generate new random variable
+    s = rnd_long(s);
+    r2 = long2float(s);
+    seed[i] = s;
 
-        uint env_idx = (uint)p_candidate.x * env_dim*env_dim + (uint)p_candidate.y * env_dim + (uint)p_candidate.z;
-        uint env = environment[env_idx];
+    // position/direction variables
+    float3 p = vload3(i, position);
+    float3 d = vload3(i, direction);
+    float3 q = p;
+    uint3 dims = vload3(0, env_dim);
+    //int camera_style = FLAT_VIEW;
 
-        if (env > 0) {
-            length *= PROPAGATION_REDUCTION_FACTOR;
-            if (length <= MIN_PROPAGATION_LENGTH) break;
-        }
-        else {
-            p = p_candidate;
-            *distance += length;
-        }
+    // ray variables
+    float3 intensity_tmp = {
+        MAX_INT_AS_FLOAT,
+        MAX_INT_AS_FLOAT,
+        MAX_INT_AS_FLOAT
+    };
+
+    //printf("%u... GO %2.3f ", i, intensity_tmp.x/MAX_INT_AS_FLOAT);
+
+    float3 color = {0.0f, 0.0f, 0.0f};
+    uint3 env_prop = {0, 0, 0};
+
+    int flag = PROPAGATE;
+
+    while (flag != TERMINATE) {
+        if (flag == PROPAGATE) {
+            flag = propagate(
+                &p, &q, &d, &color, &env_prop,
+                *initial_propagation_length,
+                dims, environment, s, r1, r2);
+        } else if (flag == WALL) {
+            intensity_tmp = intensity_tmp * color;
+            if (length(intensity_tmp) < INTENSITY_THRESHOLD) {
+                intensity_tmp *= 0.0f;
+                flag = TERMINATE;
+            } else {
+                r2 = r1;
+                s = rnd_long(s);
+                r1 = long2float(s);
+                seed[i] = s;
+                d = diffuse_angular(p, q, r1, r2);
+                flag = PROPAGATE;
+            }
+        } else if (flag == LOCAL_LIGHT) {
+            intensity_tmp = intensity_tmp * color;
+            flag = TERMINATE;
+        } else if (flag == GLOBAL_LIGHT) {
+            intensity_tmp *= get_color_from_global_light(d);
+            flag = TERMINATE;
+        } else flag = TERMINATE;
     }
-    return p;
+
+    char3 v = {(char)(intensity_tmp.x / 21677216), (char)(intensity_tmp.y / 21677216), (char)(intensity_tmp.z / 21677216)};
+    vstore3(v, i, intensity);
+
+    /*
+    while (flag != TERMINATE) {
+        if (flag == PROPAGATE) {
+            flag = propagate(
+                &p, &q, &d, &color, &env_prop,
+                *initial_propagation_length,
+                dims, environment, s, r1, r2);
+        } else if (flag == WALL) {
+            intensity_tmp = intensity_tmp * color;
+            if (length(intensity_tmp) < INTENSITY_THRESHOLD) {
+                intensity_tmp *= 0.0f;
+                flag = TERMINATE;
+            } else {
+                if ((s & 0x00000000000000FF) < env_prop.x) {
+                    d = mirror(p, q, d);
+                } else {
+                    r2 = r1;
+                    s = rnd_long(s);
+                    r1 = long2float(s);
+                    seed[i] = s;
+                    d = diffuse(p, q, r1, r2);
+                }
+                flag = PROPAGATE;
+            }
+        } else if (flag == MIRROR) {
+            intensity_tmp = intensity_tmp * color;
+            if (length(intensity_tmp) < INTENSITY_THRESHOLD) {
+                intensity_tmp *= 0.0f;
+                flag = TERMINATE;
+            } else {
+                d = mirror(p, q, d);
+                flag = PROPAGATE;
+            }
+        } else if (flag == LOCAL_LIGHT) {
+            intensity_tmp = intensity_tmp * color;
+            flag = TERMINATE;
+        } else if (flag == GLOBAL_LIGHT) {
+            intensity_tmp *= get_color_from_global_light(d);
+            flag = TERMINATE;
+        } else flag = TERMINATE;
+    }
+
+    char3 v = {
+        (char)(((uint)(intensity_tmp.x) & 0xFF000000) >> 24),
+        (char)(((uint)(intensity_tmp.y) & 0xFF000000) >> 24),
+        (char)(((uint)(intensity_tmp.z) & 0xFF000000) >> 24)
+    };
+    vstore3(v, i, intensity);
+    */
 }
 
 __kernel void lidar
@@ -303,12 +432,13 @@ __kernel void lidar
     };
 
     float3 color = {0.0f, 0.0f, 0.0f};
+    uint3 env_prop = {0, 0, 0};
     long s = 0L;
     float r1 = 0.0f;
     float r2 = 0.0f;
 
     int flag = propagate(
-        &p, &q, &d, &color,
+        &p, &q, &d, &color, &env_prop,
         *initial_propagation_length,
         dims, environment, s, r1, r2);
 
