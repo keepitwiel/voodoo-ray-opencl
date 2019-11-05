@@ -59,7 +59,7 @@ class Camera(object):
         self._environment_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint64(environment._env_array))
         self._env_dim_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint32(environment._env_array.shape))
 
-    def move(self, magnitude, environment, opencl):
+    def move(self, magnitude, environment):
         new_position = (
             self._position[0] + np.cos(self._view_direction[1]) * np.cos(self._view_direction[0]) * magnitude,
             self._position[1] + np.cos(self._view_direction[1]) * np.sin(self._view_direction[0]) * magnitude,
@@ -70,18 +70,17 @@ class Camera(object):
             if environment._env_array[int(new_position[0])][int(new_position[1])][int(new_position[2])] == 0:
                 self._position = new_position
 
-        print('new position at {}, {}, {}'.format(self._position[0], self._position[1], self._position[2]))
+        print(
+            f'new position at {self._position[0]:2.3f}, '
+            f'{ self._position[1]:2.3f}, '
+            f'{ self._position[2]:2.3f}'
+        )
 
-    def set_view_direction(self, x, y, opencl, propagation_length):
+    def set_view_direction(self, x, y):
         rel_phi = x / self._width
         rel_theta = y / self._height
         self._view_direction[0] = (rel_phi - 0.5) * 2.0 * np.pi
         self._view_direction[1] = (-rel_theta + 0.5) * 0.8 * np.pi
-
-
-    def rotate_walk_direction(self, delta, opencl):
-        self._walk_direction += delta
-
 
     def get_position(self):
         return self._position
@@ -91,13 +90,10 @@ class Camera(object):
 
     def switch(self):
         if self._mode == TRACE:
-            self._mode = TRACE_OLD
-        elif self._mode == TRACE_OLD:
             self._mode = LIDAR
         else:
             self._mode = TRACE
         print(f'switching render mode to {self._mode}...')
-
 
     def lidar(self, opencl, field_of_view, propagation_length):
         pos_in_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(self.get_position()))
@@ -122,28 +118,6 @@ class Camera(object):
             self._distance_a.data,
         )
 
-    def trace_old(self, opencl, field_of_view, propagation_length):
-        pos_in_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(self.get_position()))
-        dir_in_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(self.get_direction()))
-        field_of_view_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(field_of_view))
-        propagation_length_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(propagation_length))
-
-        opencl.prg.trace_old(
-            opencl.queue,
-            (self._width, self._height),
-            None,
-            propagation_length_g,
-            self._width_g,
-            self._height_g,
-            pos_in_g,
-            dir_in_g,
-            field_of_view_g,
-            self._intensity_a.data,
-            self._env_dim_g,
-            self._environment_g,
-            self._seed_g
-        )
-
     def trace(self, opencl, propagation_length):
         propagation_length_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(propagation_length))
 
@@ -166,22 +140,25 @@ class Camera(object):
         if self._mode in [TRACE, TRACE_OLD]:
             values = self.get_intensity()
         else:
-            d = 255.0 / (self.get_distance()**2 + 1.0)
-            values = np.dstack([d, d, d])
+            # d = 255.0 / (self.get_distance()**2 + 1.0)
+            # values = np.dstack([d, d, d])
+            values = self.get_position_as_rgb()
         surfarray.blit_array(surface, values)
 
-    def snapshot(self, opencl,field_of_view, propagation_length, nr_of_samples=1000):
+    def snapshot(self, opencl, propagation_length, nr_of_samples=10):
         # TODO: refactor with new output structure
-        values_out = np.zeros((self._width, self._height, 3), dtype=np.uint32)
+        values_out = np.zeros((self._width, self._height, 3))
         for sample in range(nr_of_samples):
-            self.trace(opencl, field_of_view, propagation_length)
-            values_out += self.get_intensity()
+            self.trace(opencl, propagation_length)
+            values_out += self.get_intensity() / nr_of_samples
 
-        imsave('snapshot.png', values_out.transpose(1, 0, 2))
-
+        imsave('snapshot.png', values_out.transpose(1, 0, 2).astype(np.uint8))
 
     def get_intensity(self):
         return self._intensity_a.get()
 
     def get_distance(self):
         return self._distance_a.get()
+
+    def get_position_as_rgb(self):
+        return self._pos_out_a.get()

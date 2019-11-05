@@ -7,31 +7,36 @@ from opencl_handler import OpenCLHandler
 from environment import Environment, prison
 
 
-def handle_events(opencl, camera, environment, propagation_length):
+def handle_events(opencl, camera, environment, field_of_view, propagation_length):
+    rerender = False
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
              sys.exit()
         elif event.type == pygame.MOUSEMOTION:
             x, y = pygame.mouse.get_pos()
-            camera.set_view_direction(x, y, opencl, propagation_length)
+            camera.set_view_direction(x, y)
+            rerender = True
         elif event.type == pygame.MOUSEBUTTONDOWN:
             environment.build(camera.get_position())
             camera.update_environment_buffer(opencl, environment)
+            rerender = True
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_q:
                 sys.exit()
-            # if event.key == pygame.K_LEFT:
-            #     camera.rotate_walk_direction(-0.1*np.pi, opencl)
-            # if event.key == pygame.K_RIGHT:
-            #     camera.rotate_walk_direction(0.1*np.pi, opencl)
             if event.key == pygame.K_DOWN:
-                camera.move(-1, environment, opencl)
+                camera.move(-1, environment)
+                rerender = True
             if event.key == pygame.K_UP:
-                camera.move(1, environment, opencl)
+                camera.move(1, environment)
+                rerender = True
             if event.key == pygame.K_SPACE:
                 camera.switch()
             if event.key == pygame.K_s:
-                camera.snapshot(opencl, field_of_view=0.5*np.pi, propagation_length=0.1, nr_of_samples=1000)
+                camera.snapshot(opencl, propagation_length=0.1)
+
+    if rerender:
+        camera.lidar(opencl, field_of_view, propagation_length)
+        camera.trace(opencl, propagation_length)
 
 def main():
     env_dim = [40, 40, 40]
@@ -62,14 +67,7 @@ def main():
     i = 0
 
     while True:
-        #environment.run()
-        handle_events(opencl, camera, environment, propagation_length)
-        camera.lidar(opencl, field_of_view, propagation_length)
-        if camera._mode == TRACE:
-            camera.trace(opencl, propagation_length)
-        elif camera._mode == TRACE_OLD:
-            camera.trace_old(opencl, field_of_view, propagation_length)
-
+        handle_events(opencl, camera, environment, field_of_view, propagation_length)
         camera.fill_surface(screen)
         pygame.display.flip()
         clock.tick()
@@ -77,6 +75,7 @@ def main():
         i += 1
         if i % 10 == 0:
             print('fps: {:2.2f}'.format(clock.get_fps()))
+
 
 if __name__ == '__main__':
     main()

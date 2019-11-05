@@ -177,96 +177,6 @@ int propagate(float3 *p, float3 *q, float3 *d,
     return flag;
 }
 
-
-__kernel void trace_old
-(
-    __global float *initial_propagation_length,
-    __global int *width,
-    __global int *height,
-    __global float *position,
-    __global float *direction,
-    __global float *field_of_view,
-    __global char *intensity,
-    __global uint *env_dim,
-    __global uint *environment,
-    __global int *seed
-)
-{
-    uint x = get_global_id(0);
-    uint y = get_global_id(1);
-    uint i = *height * x + y;
-
-    // random variables
-    long s = seed[i];
-    float r1 = long2float(s), r2;
-    // crappy way to generate new random variable
-    s = rnd_long(s);
-    r2 = long2float(s);
-    seed[i] = s;
-
-    // position/direction variables
-    float3 p = vload3(0, position);
-    float3 q = p;
-    float2 d_angular = vload2(0, direction);
-    uint3 dims = vload3(0, env_dim);
-
-    float max_dimension = max(*width, *height);
-    float angular_spacing = *field_of_view / max_dimension;
-    float phi = d_angular.x + x * angular_spacing - (*field_of_view / 2) * (*width / max_dimension);
-    float theta = d_angular.y - y * angular_spacing + (*field_of_view / 2) * (*height / max_dimension);
-
-    float3 d = {
-        cos(phi) * cos(theta),
-        sin(phi) * cos(theta),
-        sin(theta)
-    };
-
-    // ray variables
-    float3 intensity_tmp = {
-        MAX_INT_AS_FLOAT,
-        MAX_INT_AS_FLOAT,
-        MAX_INT_AS_FLOAT
-    };
-
-    //printf("%u... GO %2.3f ", i, intensity_tmp.x/MAX_INT_AS_FLOAT);
-
-    float3 color = {0.0f, 0.0f, 0.0f};
-    uint3 env_prop = {0, 0, 0};
-
-    int flag = PROPAGATE;
-
-    while (flag != TERMINATE) {
-        if (flag == PROPAGATE) {
-            flag = propagate(
-                &p, &q, &d, &color, &env_prop,
-                *initial_propagation_length,
-                dims, environment, s, r1, r2);
-        } else if (flag == WALL) {
-            intensity_tmp = intensity_tmp * color;
-            if (length(intensity_tmp) < INTENSITY_THRESHOLD) {
-                intensity_tmp *= 0.0f;
-                flag = TERMINATE;
-            } else {
-                r2 = r1;
-                s = rnd_long(s);
-                r1 = long2float(s);
-                seed[i] = s;
-                d = diffuse_angular(p, q, r1, r2);
-                flag = PROPAGATE;
-            }
-        } else if (flag == LOCAL_LIGHT) {
-            intensity_tmp = intensity_tmp * color;
-            flag = TERMINATE;
-        } else if (flag == GLOBAL_LIGHT) {
-            intensity_tmp *= get_color_from_global_light(d);
-            flag = TERMINATE;
-        } else flag = TERMINATE;
-    }
-
-    char3 v = {(char)(intensity_tmp.x / 21677216), (char)(intensity_tmp.y / 21677216), (char)(intensity_tmp.z / 21677216)};
-    vstore3(v, i, intensity);
-}
-
 __kernel void trace
 (
     __global float *initial_propagation_length,
@@ -297,7 +207,6 @@ __kernel void trace
     float3 d = vload3(i, direction);
     float3 q = p;
     uint3 dims = vload3(0, env_dim);
-    //int camera_style = FLAT_VIEW;
 
     // ray variables
     float3 intensity_tmp = {
@@ -306,45 +215,11 @@ __kernel void trace
         MAX_INT_AS_FLOAT
     };
 
-    //printf("%u... GO %2.3f ", i, intensity_tmp.x/MAX_INT_AS_FLOAT);
-
     float3 color = {0.0f, 0.0f, 0.0f};
     uint3 env_prop = {0, 0, 0};
 
     int flag = PROPAGATE;
 
-    while (flag != TERMINATE) {
-        if (flag == PROPAGATE) {
-            flag = propagate(
-                &p, &q, &d, &color, &env_prop,
-                *initial_propagation_length,
-                dims, environment, s, r1, r2);
-        } else if (flag == WALL) {
-            intensity_tmp = intensity_tmp * color;
-            if (length(intensity_tmp) < INTENSITY_THRESHOLD) {
-                intensity_tmp *= 0.0f;
-                flag = TERMINATE;
-            } else {
-                r2 = r1;
-                s = rnd_long(s);
-                r1 = long2float(s);
-                seed[i] = s;
-                d = diffuse_angular(p, q, r1, r2);
-                flag = PROPAGATE;
-            }
-        } else if (flag == LOCAL_LIGHT) {
-            intensity_tmp = intensity_tmp * color;
-            flag = TERMINATE;
-        } else if (flag == GLOBAL_LIGHT) {
-            intensity_tmp *= get_color_from_global_light(d);
-            flag = TERMINATE;
-        } else flag = TERMINATE;
-    }
-
-    char3 v = {(char)(intensity_tmp.x / 21677216), (char)(intensity_tmp.y / 21677216), (char)(intensity_tmp.z / 21677216)};
-    vstore3(v, i, intensity);
-
-    /*
     while (flag != TERMINATE) {
         if (flag == PROPAGATE) {
             flag = propagate(
@@ -387,12 +262,11 @@ __kernel void trace
     }
 
     char3 v = {
-        (char)(((uint)(intensity_tmp.x) & 0xFF000000) >> 24),
-        (char)(((uint)(intensity_tmp.y) & 0xFF000000) >> 24),
-        (char)(((uint)(intensity_tmp.z) & 0xFF000000) >> 24)
+        (char)(intensity_tmp.x / 21677216),
+        (char)(intensity_tmp.y / 21677216),
+        (char)(intensity_tmp.z / 21677216)
     };
     vstore3(v, i, intensity);
-    */
 }
 
 __kernel void lidar
@@ -446,3 +320,10 @@ __kernel void lidar
     vstore3(d, i, dir_out);
     distance[i] = dist(p, vload3(0, pos_in));
 }
+
+/*
+__kernel void euclidean_blur(
+
+) {
+}
+*/
