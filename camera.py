@@ -13,7 +13,6 @@ FLAT_VIEW = 1
 INFINITE = 2
 
 TRACE = 0
-TRACE_OLD = 1
 LIDAR = 2
 
 class Camera(object):
@@ -50,10 +49,14 @@ class Camera(object):
         self._dir_out_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 3), dtype=np.float32)
         self._distance_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height), dtype=np.float32)
         self._intensity_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 3), dtype=np.uint8)
-        self._surface_id_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 4), dtype=np.uint8)
-        self._surface_rendered_a = 127 + cl_array.zeros(
-            opencl.queue, shape=(self._env_dim[0], self._env_dim[1], self._env_dim[2], 6, 3), dtype=np.uint8
-        )
+        self._blurred_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height),
+                                         dtype=np.float32)
+        # self._surface_id_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 4),
+        # dtype=np.uint8)
+        #self._surface_rendered_a = 127 + cl_array.zeros(
+        #    opencl.queue, shape=(self._env_dim[0], self._env_dim[1], self._env_dim[2], 6, 3),
+        #    dtype=np.uint8
+        #)
 
     def update_environment_buffer(self, opencl, environment):
         self._environment_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint64(environment._env_array))
@@ -136,13 +139,34 @@ class Camera(object):
             self._seed_g
         )
 
+    def distance_blur(self, opencl):
+        scale_g = cl.Buffer(
+            opencl.ctx,
+            mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.uint8(1)
+        )
+
+        opencl.prg.distance_blur(
+            opencl.queue,
+            (self._width, self._height),
+            None,
+            self._width_g,
+            self._height_g,
+            self._pos_out_a.data,
+            self._intensity_a.data,
+            self._blurred_a.data,
+            scale_g,
+        )
+
     def fill_surface(self, surface):
-        if self._mode in [TRACE, TRACE_OLD]:
+        if self._mode == TRACE:
             values = self.get_intensity()
         else:
             # d = 255.0 / (self.get_distance()**2 + 1.0)
             # values = np.dstack([d, d, d])
-            values = self.get_position_as_rgb()
+            #values = self.get_position_as_rgb()
+            b = self._blurred_a.get().astype(np.uint8)
+            values = np.dstack([b, b, b])
         surfarray.blit_array(surface, values)
 
     def snapshot(self, opencl, propagation_length, nr_of_samples=10):

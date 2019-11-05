@@ -321,9 +321,61 @@ __kernel void lidar
     distance[i] = dist(p, vload3(0, pos_in));
 }
 
-/*
-__kernel void euclidean_blur(
-
-) {
+uint min_uint(uint a, uint b) {
+    return a < b ? a : b;
 }
-*/
+
+uint max_uint(uint a, uint b) {
+    return a > b ? a : b;
+}
+
+__kernel void distance_blur(
+    __global int *width,
+    __global int *height,
+    __global float *position,
+    __global char *intensity,
+    __global float *blurred,
+    __global uint *scale
+) {
+    int x_d = get_global_id(0); // x coordinate relating to the distance map
+    int y_d = get_global_id(1); // y
+    int ref_idx = *height * x_d + y_d;
+    int u = x_d / *scale; // x coordinate relating to the distance map
+    int v = y_d / *scale; // y
+    int u_max = *width / *scale;
+    int v_max = *height / *scale;
+    int i = 0;
+    int j = 0;
+    char3 s = {0, 0, 0};
+    float3 p = {0.0f, 0.0f, 0.0f};
+    float3 p_reference = vload3(ref_idx, position);
+    float distance = 0.0f;
+    float inverse_distance = 1.0f;
+    float cumulative_weight = 0.0f;
+    float cumulative_intensity = 0.0f;
+
+    //for (int uu = max(0, u-1); min(u_max, u+1); uu++) {
+    //    for (int vv = max(0, v-1); min(v_max, v+1); vv++) {
+    for (int uu = u-2; uu <= u+2; uu++) {
+        for (int vv = v-2; vv <= v+2; vv++) {
+            if (uu >= 0 && uu < u_max && vv >= 0 && vv < v_max) {
+                //printf("x_d: %d, y_d: %d, uu: %d, vv: %d\n", x_d, y_d, uu, vv);
+
+                i = v_max * uu + vv;
+                s = vload3(i, intensity);
+                j = *height * (uu * *scale) + (vv * *scale);
+                p = vload3(j, position);
+                distance = dist(p, p_reference);
+                inverse_distance = 1.0f / (distance*distance + 1.0f);
+                cumulative_weight += inverse_distance;
+                cumulative_intensity += ((s.x + s.y + s.z) / 3.0f) * inverse_distance;
+                //if (ref_idx == 0) printf("cumulative weight: %2.3f\n", cumulative_weight);
+                //if (ref_idx == 0) printf("%2.3f\n", cumulative_intensity);
+                //if (ref_idx == 0) printf("inverse distance: %2.3f\n", inverse_distance);
+
+            }
+        }
+    }
+
+    blurred[ref_idx] = cumulative_intensity / cumulative_weight;
+}

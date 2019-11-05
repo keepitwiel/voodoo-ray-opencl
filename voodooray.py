@@ -2,7 +2,7 @@ import numpy as np
 import pygame
 import sys
 
-from camera import Camera, TRACE, TRACE_OLD
+from camera import Camera, TRACE, LIDAR
 from opencl_handler import OpenCLHandler
 from environment import Environment, prison
 
@@ -37,6 +37,8 @@ def handle_events(opencl, camera, environment, field_of_view, propagation_length
     if rerender:
         camera.lidar(opencl, field_of_view, propagation_length)
         camera.trace(opencl, propagation_length)
+        camera.distance_blur(opencl)
+        pass
 
 def main():
     env_dim = [40, 40, 40]
