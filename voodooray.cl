@@ -187,12 +187,14 @@ __kernel void trace
     __global char *intensity,
     __global uint *env_dim,
     __global ulong *environment,
-    __global int *seed
+    __global int *seed,
+    __global int *scale
 )
 {
     uint x = get_global_id(0);
     uint y = get_global_id(1);
     uint i = *height * x + y;
+    uint j = (*height * *scale) * (*scale * x) + (*scale * y);
 
     // random variables
     long s = seed[i];
@@ -203,8 +205,8 @@ __kernel void trace
     seed[i] = s;
 
     // position/direction variables
-    float3 p = vload3(i, position);
-    float3 d = vload3(i, direction);
+    float3 p = vload3(j, position);
+    float3 d = vload3(j, direction);
     float3 q = p;
     uint3 dims = vload3(0, env_dim);
 

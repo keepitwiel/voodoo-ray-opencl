@@ -42,8 +42,9 @@ def handle_events(opencl, camera, environment, field_of_view, propagation_length
 
 def main():
     env_dim = [40, 40, 40]
-    width = 640
-    height = 400
+    blur_scale = 4
+    width = 320
+    height = 200
     propagation_length = 0.99
     position = [2, env_dim[1] - 2, 5]
     view_direction = [0, 0]
@@ -59,10 +60,11 @@ def main():
         ],
         device=1,
     )
-    camera = Camera(position, view_direction, walk_direction, width, height, opencl, environment)
+    camera = Camera(position, view_direction, walk_direction, width, height, opencl, environment,
+                    blur_scale)
 
     pygame.init()
-    screen = pygame.display.set_mode((width, height))
+    screen = pygame.display.set_mode((width * blur_scale, height * blur_scale))
     #screen = pygame.display.set_mode((width, height), (pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF))
     clock = pygame.time.Clock()
 

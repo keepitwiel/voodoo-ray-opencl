@@ -16,7 +16,8 @@ TRACE = 0
 LIDAR = 2
 
 class Camera(object):
-    def __init__(self, position, view_direction, walk_direction, width, height, opencl, environment):
+    def __init__(self, position, view_direction, walk_direction, width, height, opencl,
+                 environment, blur_scale):
         self._position = position
         self._view_direction = view_direction
         self._walk_direction = walk_direction
@@ -27,14 +28,38 @@ class Camera(object):
         self._field_of_view = 1/3 * np.pi
         self._ray_spacing = 0.1
         self._mode = TRACE
+        self._blur_scale = blur_scale
 
         seed = np.random.randint(-(2 ** 31), 2 ** 31 - 1, size=(self._width, self._height))
         seed3d = np.random.randint(-(2 ** 31), 2 ** 31 - 1, size=(self._env_dim[0], self._env_dim[1], self._env_dim[2]))
 
         # opencl stuff
         # opencl buffers
-        self._width_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.int32(self._width))
-        self._height_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.int32(self._height))
+        self._blur_width_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.int32(self._width * self._blur_scale)
+        )
+        self._blur_height_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.int32(self._height * self._blur_scale)
+        )
+        self._width_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.int32(self._width)
+        )
+        self._height_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.int32(self._height)
+        )
+        self._blur_width_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.int32(self._width * self._blur_scale)
+        )
+        self._blur_height_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.int32(self._height * self._blur_scale)
+        )
+
         self._env_dim_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint32(environment._env_array.shape))
         self._env_dim_x_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint32(environment._env_array.shape[0]))
         self._env_dim_y_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint32(environment._env_array.shape[1]))
@@ -43,20 +68,21 @@ class Camera(object):
         self._environment_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint64(environment._env_array))
         self._seed_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.int32(seed))
         self._seed3d_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.int32(seed3d))
+        self._scale_g = cl.Buffer(
+            opencl.ctx,
+            mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.uint8(self._blur_scale)
+        )
 
         # opencl arrays
-        self._pos_out_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 3), dtype=np.float32)
-        self._dir_out_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 3), dtype=np.float32)
-        self._distance_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height), dtype=np.float32)
-        self._intensity_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 3), dtype=np.uint8)
-        self._blurred_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height),
-                                         dtype=np.float32)
-        # self._surface_id_a = cl_array.zeros(opencl.queue, shape=(self._width, self._height, 4),
-        # dtype=np.uint8)
-        #self._surface_rendered_a = 127 + cl_array.zeros(
-        #    opencl.queue, shape=(self._env_dim[0], self._env_dim[1], self._env_dim[2], 6, 3),
-        #    dtype=np.uint8
-        #)
+        full_shape = (self._width * self._blur_scale, self._height * self._blur_scale)
+        full_shape_3 = (self._width * self._blur_scale, self._height * self._blur_scale, 3)
+        trace_shape = (self._width, self._height, 3)
+        self._pos_out_a = cl_array.zeros(opencl.queue, shape=full_shape_3, dtype=np.float32)
+        self._dir_out_a = cl_array.zeros(opencl.queue, shape=full_shape_3, dtype=np.float32)
+        self._distance_a = cl_array.zeros(opencl.queue, shape=full_shape, dtype=np.float32)
+        self._intensity_a = cl_array.zeros(opencl.queue, shape=trace_shape, dtype=np.uint8)
+        self._blurred_a = cl_array.zeros(opencl.queue, shape=full_shape, dtype=np.float32)
 
     def update_environment_buffer(self, opencl, environment):
         self._environment_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.uint64(environment._env_array))
@@ -106,10 +132,10 @@ class Camera(object):
 
         opencl.prg.lidar(
             opencl.queue,
-            (self._width, self._height),
+            (self._width * self._blur_scale, self._height * self._blur_scale),
             None,
-            self._width_g,
-            self._height_g,
+            self._blur_width_g,
+            self._blur_height_g,
             pos_in_g,
             dir_in_g,
             self._pos_out_a.data,
@@ -122,7 +148,10 @@ class Camera(object):
         )
 
     def trace(self, opencl, propagation_length):
-        propagation_length_g = cl.Buffer(opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR, hostbuf=np.float32(propagation_length))
+        propagation_length_g = cl.Buffer(
+            opencl.ctx, mf.READ_ONLY | mf.COPY_HOST_PTR,
+            hostbuf=np.float32(propagation_length)
+        )
 
         opencl.prg.trace(
             opencl.queue,
@@ -136,31 +165,33 @@ class Camera(object):
             self._intensity_a.data,
             self._env_dim_g,
             self._environment_g,
-            self._seed_g
+            self._seed_g,
+            self._scale_g,
         )
 
     def distance_blur(self, opencl):
-        scale_g = cl.Buffer(
-            opencl.ctx,
-            mf.READ_ONLY | mf.COPY_HOST_PTR,
-            hostbuf=np.uint8(1)
-        )
-
         opencl.prg.distance_blur(
             opencl.queue,
-            (self._width, self._height),
+            (self._width * self._blur_scale, self._height * self._blur_scale),
             None,
-            self._width_g,
-            self._height_g,
+            self._blur_width_g,
+            self._blur_height_g,
             self._pos_out_a.data,
             self._intensity_a.data,
             self._blurred_a.data,
-            scale_g,
+            self._scale_g,
         )
 
     def fill_surface(self, surface):
         if self._mode == TRACE:
-            values = self.get_intensity()
+            values = np.zeros(
+                shape=(
+                    self._width * self._blur_scale,
+                    self._height * self._blur_scale,
+                    3,
+                )
+            )
+            values[0:self._width, 0:self._height] = self.get_intensity()
         else:
             # d = 255.0 / (self.get_distance()**2 + 1.0)
             # values = np.dstack([d, d, d])
