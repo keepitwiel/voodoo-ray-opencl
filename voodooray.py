@@ -35,6 +35,7 @@ def handle_events(opencl, camera, environment, field_of_view, propagation_length
                 camera.snapshot(opencl, propagation_length=0.1)
 
     if rerender:
+        print("rerendering...")
         camera.lidar(opencl, field_of_view, propagation_length)
         camera.trace(opencl, propagation_length)
         camera.distance_blur(opencl)
@@ -43,6 +44,7 @@ def handle_events(opencl, camera, environment, field_of_view, propagation_length
 def main():
     env_dim = [40, 40, 40]
     blur_scale = 4
+    blur_distance = 0.1
     width = 320
     height = 200
     propagation_length = 0.99
@@ -61,11 +63,13 @@ def main():
         device=1,
     )
     camera = Camera(position, view_direction, walk_direction, width, height, opencl, environment,
-                    blur_scale)
+                    blur_scale, blur_distance)
 
     pygame.init()
-    screen = pygame.display.set_mode((width * blur_scale, height * blur_scale))
-    #screen = pygame.display.set_mode((width, height), (pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF))
+    screen = pygame.display.set_mode((width * blur_scale, height * blur_scale),
+     (pygame.HWSURFACE | pygame.DOUBLEBUF))
+    #screen = pygame.display.set_mode((width, height), (pygame.FULLSCREEN | pygame.HWSURFACE |
+    # pygame.DOUBLEBUF))
     clock = pygame.time.Clock()
 
     i = 0
